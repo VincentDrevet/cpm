@@ -1,8 +1,10 @@
 package main
 
 import (
+	"compress/gzip"
 	"fmt"
 	"io"
+	"io/ioutil"
 	"net/http"
 	"os"
 	"strconv"
@@ -118,6 +120,36 @@ func PrintProgress(channel chan int64, totalsize int, filepath string) {
 	}
 }
 
+func ExtractGZ(filepath string) {
+	var filename []string = strings.Split(filepath, "/")
+	fmt.Println("Extraction du fichier " + filepath + "-extracted")
+
+	buffer, err := os.Open(filepath)
+	if err != nil {
+		fmt.Printf("Erreur lors de l'accès au fichier : %v", err)
+	}
+	uncompressstream, errorreadgz := gzip.NewReader(buffer)
+	if errorreadgz != nil {
+		fmt.Printf("Erreur lors de la compression du fichier: %v", errorreadgz)
+	}
+	defer uncompressstream.Close()
+
+	extractfile, errorcreatefile := os.Create(filename[len(filename)-1] + "-extracted")
+	if errorcreatefile != nil {
+		fmt.Printf("Erreur lors de la création du fichier: %v", errorcreatefile)
+	}
+	data, errorread := ioutil.ReadAll(uncompressstream)
+	if errorread != nil {
+		fmt.Printf("Erreur lors de la lecture des donnée du buffer: %v", errorread)
+	}
+
+	_, errorwrite := extractfile.Write(data)
+	if errorwrite != nil {
+		fmt.Printf("Erreur lors de l'écriture des données : %v", errorwrite)
+	}
+
+}
+
 func main() {
 
 	// Chargement de la configuration
@@ -138,6 +170,8 @@ func main() {
 				fmt.Println("Téléchargement du manifeste de la collection " + collection + " :")
 				//fmt.Println(conf.baseURL + "dists/" + conf.version + "/" + collection + "/" + "binary-amd64/Packages.gz")
 				DownloadFile(conf.baseURL+"dists/"+conf.version+"/"+collection+"/"+"binary-amd64/Packages.gz", "")
+				ExtractGZ("Packages.gz")
+
 			}
 		}
 	}
