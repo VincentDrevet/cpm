@@ -12,6 +12,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/boltdb/bolt"
+
 	"github.com/shirou/gopsutil/host"
 	"gopkg.in/ini.v1"
 )
@@ -24,6 +26,7 @@ type Configuration struct {
 	version     string
 	collections []string
 	localCache  string
+	dblocation  string
 }
 
 // Package represente toute les informations d'un package
@@ -60,8 +63,9 @@ func LoadSettings(conffilepath string) Configuration {
 	loadConfiguration.collections = parseCollections
 
 	loadConfiguration.localCache = config_file.Section("Main").Key("local_cache").String()
-	return loadConfiguration
 
+	loadConfiguration.dblocation = config_file.Section("Main").Key("db_location").String()
+	return loadConfiguration
 }
 
 func DownloadFile(url string, destdir string) {
@@ -131,7 +135,7 @@ func PrintProgress(channel chan int64, totalsize int, filepath string) {
 
 			var percent float64 = float64(currentsize) / float64(totalsize) * 100
 
-			fmt.Printf("%.0f", percent)
+			fmt.Printf("Téléchargement en cours : %.0f", percent)
 			fmt.Println("%")
 
 		}
@@ -171,7 +175,7 @@ func ExtractGZ(filepath string) {
 	}
 
 }
-func ParseManifestFile(filepath string) {
+func ParseManifestFile(filepath string, dbpath string) {
 	file, erropenfile := os.Open(filepath)
 	if erropenfile != nil {
 		fmt.Printf("Erreur lors de l'ouverture du fichier: %v", erropenfile)
@@ -184,11 +188,8 @@ func ParseManifestFile(filepath string) {
 	for scanner.Scan() {
 		//Si on rencontre une ligne vide on sauvegarde le package en base
 		if scanner.Text() == "" {
-			fmt.Println("Fin de section de packet")
-			/*
-				TODO enregistrement en DB
-			*/
-			fmt.Println(pkgs)
+			SearchAndInsertPackage(pkgs, dbpath)
+			fmt.Printf(".")
 		}
 		// on split la chaine pour séparer la clé de la valeur
 		var split []string = strings.Split(scanner.Text(), ": ")
@@ -240,34 +241,126 @@ func ParseManifestFile(filepath string) {
 
 	}
 }
+func ConvertStringArrayToByteArray(array []string) []byte {
+	stringByte := "\x00" + strings.Join(array, "\x20\x00") // x20 = space and x00 = null
 
-func main() {
-	/*
-		// Chargement de la configuration
-		var conf Configuration = LoadSettings(inipath)
+	return []byte(stringByte)
+}
 
-		// Récupération des arguments
-		args := os.Args
+func SavePackage(dbfilepath string, pkg Package, tx *bolt.Tx) {
+	bucket, err := tx.CreateBucket([]byte(pkg.Name))
+	if err != nil {
+		fmt.Printf("Erreur lors de la création du bucket: %v", err)
+	}
+	bucket.Put([]byte("Version"), []byte(pkg.Version))
+	bucket.Put([]byte("InstalledSize"), []byte(strconv.Itoa(pkg.InstalledSize)))
+	bucket.Put([]byte("Maintainer"), []byte(pkg.Maintainer))
+	bucket.Put([]byte("Architecture"), []byte(pkg.Architecture))
+	bucket.Put([]byte("Depends"), []byte(ConvertStringArrayToByteArray(pkg.Depends)))
+	bucket.Put([]byte("Description"), []byte(pkg.Description))
+	bucket.Put([]byte("Homepage"), []byte(pkg.Homepage))
+	bucket.Put([]byte("Descriptionmd5"), []byte(pkg.Descriptionmd5))
+	bucket.Put([]byte("Tag"), []byte(ConvertStringArrayToByteArray(pkg.Tag)))
+	bucket.Put([]byte("Section"), []byte(pkg.Section))
+	bucket.Put([]byte("Priority"), []byte(pkg.Priority))
+	bucket.Put([]byte("filename"), []byte(pkg.filename))
+	bucket.Put([]byte("Size"), []byte(strconv.Itoa(pkg.Size)))
+	bucket.Put([]byte("MD5sum"), []byte(pkg.MD5sum))
+	bucket.Put([]byte("SHA256"), []byte(pkg.SHA256))
+}
 
-		if len(args) < 2 {
-			fmt.Println("Erreur argument manquant")
-			os.Exit(1)
+// PackageExist renvoi true si le paquet existe et false s'il n'existe pas
+func PackageExist(pkg *bolt.Bucket) bool {
+	if pkg == nil {
+		return false
+	} else {
+		return true
+	}
+}
+
+func SearchPackage(namepkg string, dbfilepath string) {
+	db, err := bolt.Open(dbfilepath, 0700, nil)
+	if err != nil {
+		fmt.Printf("Erreur lors de l'ouverture de la base de donnée: %v", err)
+	}
+	defer db.Close()
+	db.View(func(tx *bolt.Tx) error {
+		pkg := tx.Bucket([]byte(namepkg))
+		if PackageExist(pkg) == false {
+			fmt.Println("Erreur le package n'existe pas !")
+		} else {
+			fmt.Println("-----------------------------------------------------------------------------------------------------------------------------------------------------")
+			fmt.Printf("Nom du paquet : %s\n", namepkg)
+			fmt.Printf("Numéro de version : %s\n", pkg.Get([]byte("Version")))
+			fmt.Printf("Taille en Octets : %s\n", pkg.Get([]byte("InstalledSize")))
+			fmt.Printf("Mainteneur : %s\n", pkg.Get([]byte("Maintainer")))
+			fmt.Printf("Architecture : %s\n", pkg.Get([]byte("Architecture")))
+			fmt.Printf("Dépendances : %s\n", pkg.Get([]byte("Depends")))
+			fmt.Printf("Descriptions : %s\n", pkg.Get([]byte("Description")))
+			fmt.Printf("Page Web : %s\n", pkg.Get([]byte("Homepage")))
+			fmt.Printf("Hash MD5 de la description : %s\n", pkg.Get([]byte("Descriptionmd5")))
+			fmt.Printf("Tags : %s", pkg.Get([]byte("Tag")))
+			fmt.Printf("Sections : %s\n", pkg.Get([]byte("Section")))
+			fmt.Printf("Priorité : %s\n", pkg.Get([]byte("Priority")))
+			fmt.Printf("Chemin vers le paquet : %s\n", pkg.Get([]byte("filename")))
+			fmt.Printf("Taille du paquet : %s\n", pkg.Get([]byte("Size")))
+			fmt.Printf("Checksum MD5 : %s\n", pkg.Get([]byte("MD5sum")))
+			fmt.Printf("Checksum SHA256 : %s\n", pkg.Get([]byte("SHA256")))
+			fmt.Println("-----------------------------------------------------------------------------------------------------------------------------------------------------")
 		}
-		// Si on met à jour le cache local
-		if args[1] == "update" {
-			// Si l'arch est en 64bit
-			if GetArchitecture() == "x86_64" {
-				for _, collection := range conf.collections {
-					fmt.Println("Téléchargement du manifeste de la collection " + collection + " :")
-					//fmt.Println(conf.baseURL + "dists/" + conf.version + "/" + collection + "/" + "binary-amd64/Packages.gz")
-					DownloadFile(conf.baseURL+"dists/"+conf.version+"/"+collection+"/"+"binary-amd64/Packages.gz", "")
-					ExtractGZ("Packages.gz")
+		return nil
+	})
+}
 
-				}
+func SearchAndInsertPackage(pkg Package, dbfilepath string) {
+	db, err := bolt.Open(dbfilepath, 0700, nil)
+	if err != nil {
+		fmt.Printf("Erreur lors de l'ouverture de la base de donnée: %v", err)
+	}
+	defer db.Close()
+	db.Update(func(tx *bolt.Tx) error {
+		pkgdb := tx.Bucket([]byte(pkg.Name))
+		if PackageExist(pkgdb) == false {
+			SavePackage(dbfilepath, pkg, tx)
+		} else {
+			if pkg.filename != string(pkgdb.Get([]byte("filename"))[:]) {
+				tx.DeleteBucket([]byte(pkg.Name))
+				SavePackage(dbfilepath, pkg, tx)
 			}
 		}
-	*/
-	//DownloadFile("http://ftp.debian.org/debian/dists/buster/main/binary-amd64/Packages.gz", "")
-	ParseManifestFile("Packages.gz-extracted")
+		return nil
+	})
 
+}
+
+func main() {
+
+	// Chargement de la configuration
+	var conf Configuration = LoadSettings(inipath)
+	// Récupération des arguments
+	args := os.Args
+
+	if len(args) < 2 {
+		fmt.Println("Erreur argument manquant")
+		os.Exit(1)
+	}
+	// Si on met à jour le cache local
+	if args[1] == "update" {
+		// Si l'arch est en 64bit
+		if GetArchitecture() == "x86_64" {
+			for _, collection := range conf.collections {
+				fmt.Println("Téléchargement du manifeste de la collection " + collection + " :")
+				DownloadFile(conf.baseURL+"dists/"+conf.version+"/"+collection+"/"+"binary-amd64/Packages.gz", "")
+				ExtractGZ("Packages.gz")
+				ParseManifestFile("Packages.gz-extracted", conf.dblocation)
+			}
+		}
+	}
+	if args[1] == "search" {
+		if len(args) < 3 {
+			fmt.Println("Usage : \"cpm search <Nom du paquet>\"")
+		} else {
+			SearchPackage(args[2], conf.dblocation)
+		}
+	}
 }
