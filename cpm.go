@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"compress/gzip"
 	"fmt"
 	"io"
@@ -23,6 +24,26 @@ type Configuration struct {
 	version     string
 	collections []string
 	localCache  string
+}
+
+// Package represente toute les informations d'un package
+type Package struct {
+	Name           string
+	Version        string
+	InstalledSize  int
+	Maintainer     string
+	Architecture   string
+	Depends        []string
+	Description    string
+	Homepage       string
+	Descriptionmd5 string
+	Tag            []string
+	Section        string
+	Priority       string
+	filename       string
+	Size           int
+	MD5sum         string
+	SHA256         string
 }
 
 func LoadSettings(conffilepath string) Configuration {
@@ -53,7 +74,7 @@ func DownloadFile(url string, destdir string) {
 	if err != nil {
 		fmt.Printf("Erreur lors du téléchargement du fichier : %v", err)
 	}
-	fmt.Println(resp.Header.Get("Content-Length"))
+	//fmt.Println(resp.Header.Get("Content-Length"))
 	defer resp.Body.Close()
 
 	file, errorfile := os.Create(destdir + parseURL[len(parseURL)-1])
@@ -85,6 +106,7 @@ func GetArchitecture() string {
 	return system.KernelArch
 }
 
+// PrintProgress affiche l'avancement du téléchargement via une goroutine.
 func PrintProgress(channel chan int64, totalsize int, filepath string) {
 	var stop bool = false
 
@@ -149,33 +171,103 @@ func ExtractGZ(filepath string) {
 	}
 
 }
+func ParseManifestFile(filepath string) {
+	file, erropenfile := os.Open(filepath)
+	if erropenfile != nil {
+		fmt.Printf("Erreur lors de l'ouverture du fichier: %v", erropenfile)
+	}
+	defer file.Close()
+	scanner := bufio.NewScanner(file)
+	scanner.Split(bufio.ScanLines)
+	var pkgs Package
+	// On parcours le fichier ligne par ligne
+	for scanner.Scan() {
+		//Si on rencontre une ligne vide on sauvegarde le package en base
+		if scanner.Text() == "" {
+			fmt.Println("Fin de section de packet")
+			/*
+				TODO enregistrement en DB
+			*/
+			fmt.Println(pkgs)
+		}
+		// on split la chaine pour séparer la clé de la valeur
+		var split []string = strings.Split(scanner.Text(), ": ")
+		switch split[0] {
+		case "Package":
+			pkgs.Name = split[1]
+		case "Version":
+			pkgs.Version = split[1]
+		case "Installed-Size":
+			stoint, err := strconv.Atoi(split[1])
+			if err != nil {
+				fmt.Printf("Erreur lors de la conversion de type: %v", err)
+			}
+			pkgs.InstalledSize = stoint
+		case "Maintainer":
+			pkgs.Maintainer = split[1]
+		case "Architecture":
+			pkgs.Architecture = split[1]
+		case "Depends": // /\ ATTENTION METTRE EN TABLEAU DE STRING
+			var parsing []string = strings.Split(split[1], ",")
+			pkgs.Depends = parsing
+		case "Description":
+			pkgs.Description = split[1]
+		case "Homepage":
+			pkgs.Homepage = split[1]
+		case "Description-md5":
+			pkgs.Descriptionmd5 = split[1]
+		case "Tag": // /\ ATTENTION METTRE EN TABLEAU DE STRING
+			var parsing []string = strings.Split(split[1], ",")
+			pkgs.Tag = parsing
+		case "Section":
+			pkgs.Section = split[1]
+		case "Priority":
+			pkgs.Priority = split[1]
+		case "Filename":
+			pkgs.filename = split[1]
+		case "Size":
+			stoint, err := strconv.Atoi(split[1])
+			if err != nil {
+				fmt.Printf("Erreur lors de la conversion de type: %v", err)
+			}
+			pkgs.Size = stoint
+		case "MD5sum":
+			pkgs.MD5sum = split[1]
+		case "SHA256":
+			pkgs.SHA256 = split[1]
+
+		}
+
+	}
+}
 
 func main() {
+	/*
+		// Chargement de la configuration
+		var conf Configuration = LoadSettings(inipath)
 
-	// Chargement de la configuration
-	var conf Configuration = LoadSettings(inipath)
+		// Récupération des arguments
+		args := os.Args
 
-	// Récupération des arguments
-	args := os.Args
+		if len(args) < 2 {
+			fmt.Println("Erreur argument manquant")
+			os.Exit(1)
+		}
+		// Si on met à jour le cache local
+		if args[1] == "update" {
+			// Si l'arch est en 64bit
+			if GetArchitecture() == "x86_64" {
+				for _, collection := range conf.collections {
+					fmt.Println("Téléchargement du manifeste de la collection " + collection + " :")
+					//fmt.Println(conf.baseURL + "dists/" + conf.version + "/" + collection + "/" + "binary-amd64/Packages.gz")
+					DownloadFile(conf.baseURL+"dists/"+conf.version+"/"+collection+"/"+"binary-amd64/Packages.gz", "")
+					ExtractGZ("Packages.gz")
 
-	if len(args) < 2 {
-		fmt.Println("Erreur argument manquant")
-		os.Exit(1)
-	}
-	// Si on met à jour le cache local
-	if args[1] == "update" {
-		// Si l'arch est en 64bit
-		if GetArchitecture() == "x86_64" {
-			for _, collection := range conf.collections {
-				fmt.Println("Téléchargement du manifeste de la collection " + collection + " :")
-				//fmt.Println(conf.baseURL + "dists/" + conf.version + "/" + collection + "/" + "binary-amd64/Packages.gz")
-				DownloadFile(conf.baseURL+"dists/"+conf.version+"/"+collection+"/"+"binary-amd64/Packages.gz", "")
-				ExtractGZ("Packages.gz")
-
+				}
 			}
 		}
-	}
-
+	*/
 	//DownloadFile("http://ftp.debian.org/debian/dists/buster/main/binary-amd64/Packages.gz", "")
+	ParseManifestFile("Packages.gz-extracted")
 
 }
